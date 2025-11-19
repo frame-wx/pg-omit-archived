@@ -126,10 +126,21 @@ const makeUtils = (
 
   const parentTableRelevantColumn = getRelevantColumn(parentTable);
   const capableOfInherit = allowInherit && appliesToTable(parentTable);
+
+  // introspectionResultsByKind.attributeのtype.categoryの例:
+  // "B" - Boolean型
+  // "N" - Numeric型（数値型）
+  // "S" - String型（文字列型）
+  // "D" - DateTime型
+  // "A" - Array型
   const pgRelevantColumnIsBoolean = relevantColumn?.type.category === "B";
   const pgParentRelevantColumnIsBoolean =
     parentTableRelevantColumn &&
     parentTableRelevantColumn.type.category === "B";
+  const pgRelevantColumnIsNumber = relevantColumn?.type.category === "N";
+  const pgParentRelevantColumnIsNumber =
+    parentTableRelevantColumn &&
+    parentTableRelevantColumn.type.category === "N";
 
   const booleanVisibleFragment = invert
     ? sql.fragment`true`
@@ -147,6 +158,14 @@ const makeUtils = (
     ? sql.fragment`null`
     : sql.fragment`not null`;
 
+  const numberVisibleFragment = invert
+    ? sql.fragment`<> 0`
+    : sql.fragment`= 0`;
+
+  const numberInvisibleFragment = invert
+    ? sql.fragment`= 0`
+    : sql.fragment`<> 0`;
+
   const rawLocalDetails = expression
     ? appliesToTable(relevantClass)
       ? {
@@ -154,6 +173,7 @@ const makeUtils = (
             sql.fragment`(${expression(sql, tableAlias)})`,
           visibleFragment: booleanVisibleFragment,
           invisibleFragment: booleanInvisibleFragment,
+          isNumber: false,
         }
       : null
     : relevantColumn
@@ -162,10 +182,11 @@ const makeUtils = (
           sql.fragment`${tableAlias}.${sql.identifier(relevantColumn.name)}`,
         visibleFragment: pgRelevantColumnIsBoolean
           ? booleanVisibleFragment
-          : nullableVisibleFragment,
+          : (pgRelevantColumnIsNumber ? numberVisibleFragment : nullableVisibleFragment),
         invisibleFragment: pgRelevantColumnIsBoolean
           ? booleanInvisibleFragment
-          : nullableInvisibleFragment,
+          : (pgRelevantColumnIsNumber ? numberInvisibleFragment : nullableInvisibleFragment),
+        isNumber: pgRelevantColumnIsNumber,
       }
     : null;
 
@@ -181,6 +202,7 @@ const makeUtils = (
             sql.fragment`(${expression(sql, tableAlias)})`,
           visibleFragment: booleanVisibleFragment,
           invisibleFragment: booleanInvisibleFragment,
+          isNumber: false,
         }
       : parentTableRelevantColumn
       ? {
@@ -190,10 +212,11 @@ const makeUtils = (
             )}`,
           visibleFragment: pgParentRelevantColumnIsBoolean
             ? booleanVisibleFragment
-            : nullableVisibleFragment,
+            : (pgParentRelevantColumnIsNumber ? numberVisibleFragment : nullableVisibleFragment),
           invisibleFragment: pgParentRelevantColumnIsBoolean
             ? booleanInvisibleFragment
-            : nullableInvisibleFragment,
+            : (pgParentRelevantColumnIsNumber ? numberInvisibleFragment : nullableInvisibleFragment),
+          isNumber: pgParentRelevantColumnIsNumber,
         }
       : null
     : null;
@@ -235,20 +258,21 @@ const makeUtils = (
       parentDetails
     ) {
       const sqlParentTableAlias = queryBuilder.parentQueryBuilder.getTableAlias();
-      fragment = sql.fragment`(${parentDetails.expression(
-        sql,
-        sqlParentTableAlias,
-      )} is ${parentDetails.invisibleFragment} or ${localDetails.expression(
-        sql,
-        myAlias,
-      )} is ${localDetails.visibleFragment})`;
+      const parentCondition = parentDetails.isNumber
+        ? sql.fragment`${parentDetails.expression(sql, sqlParentTableAlias)} ${parentDetails.invisibleFragment}`
+        : sql.fragment`${parentDetails.expression(sql, sqlParentTableAlias)} is ${parentDetails.invisibleFragment}`;
+      const localCondition = localDetails.isNumber
+        ? sql.fragment`${localDetails.expression(sql, myAlias)} ${localDetails.visibleFragment}`
+        : sql.fragment`${localDetails.expression(sql, myAlias)} is ${localDetails.visibleFragment}`;
+      fragment = sql.fragment`(${parentCondition} or ${localCondition})`;
     } else if (relevantSettingIfNotInherit === "NO") {
-      fragment = sql.fragment`${localDetails.expression(sql, myAlias)} is ${
-        localDetails.visibleFragment
-      }`;
+      fragment = localDetails.isNumber
+        ? sql.fragment`${localDetails.expression(sql, myAlias)} ${localDetails.visibleFragment}`
+        : sql.fragment`${localDetails.expression(sql, myAlias)} is ${localDetails.visibleFragment}`;
     } else if (relevantSettingIfNotInherit === "EXCLUSIVELY") {
-      fragment = sql.fragment`${localDetails.expression(sql, myAlias)} is ${
-        localDetails.invisibleFragment
+      fragment = localDetails.isNumber
+        ? sql.fragment`${localDetails.expression(sql, myAlias)} ${localDetails.invisibleFragment}`
+        : sql.fragment`${localDetails.expression(sql, myAlias)} is ${localDetails.invisibleFragment
       }`;
     }
     if (fragment) {
